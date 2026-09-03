@@ -81,7 +81,7 @@ jobs:
         run: |
           uvx --from "esphome==${{ steps.esphome.outputs.version }}" \
             esphome compile \
-            examples/waveshare-esp32-s3-touch-lcd-1.46.yaml
+            examples/waveshare-esp32-s3-touch-lcd-1.46-showcase.yaml
 
       - name: Collect firmware
         if: steps.decision.outputs.build == 'true'

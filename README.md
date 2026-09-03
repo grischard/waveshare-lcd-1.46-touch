@@ -27,7 +27,7 @@ demonstrates:
 ```sh
 # The example yaml expects `wifi_ssid` and `wifi_password` in your secrets.yaml.
 cp examples/secrets.example.yaml examples/secrets.yaml
-esphome run examples/waveshare-esp32-s3-touch-lcd-1.46.yaml
+esphome run examples/waveshare-esp32-s3-touch-lcd-1.46-showcase.yaml
 ```
 
 ## External components
