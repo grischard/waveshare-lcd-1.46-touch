@@ -1,0 +1,138 @@
+name: ESPHome CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Poll once a day for a newly published ESPHome release.
+    - cron: "23 6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Resolve latest ESPHome
+        id: esphome
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(
+            uvx --from esphome esphome version \
+              | sed -n 's/^Version:[[:space:]]*//p' \
+              | head -n1
+          )"
+
+          if [ -z "$VERSION" ]; then
+            echo "Could not determine ESPHome version" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest ESPHome: $VERSION"
+
+      # This cache is only a marker for scheduled runs.
+      #
+      # - push / pull_request / workflow_dispatch: always build
+      # - schedule: build only if this ESPHome version has not been seen before
+      - name: Check whether this ESPHome release was already tested
+        id: tested
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci/esphome-version
+          key: esphome-tested-${{ steps.esphome.outputs.version }}
+
+      - name: Decide whether to build
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.tested.outputs.cache-hit }}" = "true" ]; then
+            echo "ESPHome ${{ steps.esphome.outputs.version }} was already tested; skipping scheduled rebuild."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New ESPHome release detected: ${{ steps.esphome.outputs.version }}"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare example secrets
+        if: steps.decision.outputs.build == 'true'
+        run: cp examples/secrets.example.yaml examples/secrets.yaml
+
+      - name: Compile hardware showcase
+        if: steps.decision.outputs.build == 'true'
+        run: |
+          uvx --from "esphome==${{ steps.esphome.outputs.version }}" \
+            esphome compile \
+            examples/waveshare-esp32-s3-touch-lcd-1.46.yaml
+
+      - name: Collect firmware
+        if: steps.decision.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          BIN="$(
+            find examples/.esphome .esphome \
+              -type f -name firmware.bin \
+              -print 2>/dev/null \
+              | head -n1
+          )"
+
+          if [ -z "$BIN" ]; then
+            echo "firmware.bin not found after successful compile" >&2
+            find . -type f \( -name '*.bin' -o -name '*.elf' \) -print
+            exit 1
+          fi
+
+          cp "$BIN" "dist/waveshare-esp32-s3-touch-lcd-1.46-${{ steps.esphome.outputs.version }}.bin"
+
+          ls -lh dist
+
+      - name: Upload firmware
+        if: steps.decision.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: waveshare-esp32-s3-touch-lcd-1.46-${{ steps.esphome.outputs.version }}
+          path: dist/*.bin
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Mark ESPHome release as tested
+        if: >
+          success() &&
+          github.event_name == 'schedule' &&
+          steps.decision.outputs.build == 'true'
+        shell: bash
+        run: |
+          mkdir -p .ci
+          printf '%s\n' "${{ steps.esphome.outputs.version }}" > .ci/esphome-version
+
+      - name: Save tested-version marker
+        if: >
+          success() &&
+          github.event_name == 'schedule' &&
+          steps.decision.outputs.build == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci/esphome-version
+          key: esphome-tested-${{ steps.esphome.outputs.version }}

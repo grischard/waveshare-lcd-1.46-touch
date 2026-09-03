@@ -1,0 +1,672 @@
+# Waveshare ESP32-S3-Touch-LCD-1.46 hardware showcase
+#
+# Tested target: ESPHome 2026.8.2
+#
+# Demonstrates:
+#   - SPD2010 412x412 QSPI display
+#   - SPD2010 capacitive touchscreen
+#   - QMI8658 accelerometer + gyroscope + temperature + pitch/roll
+#   - PCF85063 RTC, seeded at boot and synchronised from Home Assistant
+#   - I2S microphone with an RMS dB VU meter
+#   - I2S speaker / PCM5101-style external DAC with an on-device test sound
+#   - PWM backlight control
+#
+# Copy secrets.example.yaml to secrets.yaml and fill in your Wi-Fi credentials.
+
+esphome:
+  name: waveshare-146-showcase
+  friendly_name: Waveshare 1.46 Hardware Showcase
+  on_boot:
+    # Seed system time from the battery-backed RTC before Wi-Fi/HA is available.
+    - priority: 600
+      then:
+        - pcf85063.read_time: rtc_time
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+    advanced:
+      execute_from_psram: true
+      compiler_optimization: PERF
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE
+  ap:
+    ssid: "Waveshare-146 Fallback"
+
+captive_portal:
+
+# Home Assistant native API.
+api:
+
+ota:
+  - platform: esphome
+
+external_components:
+  # Once this fork is public, use the GitHub source instead:
+  #
+  # - source: github://grischard/waveshare-lcd-1.46-touch
+  #   components:
+  #     - spd2010_display
+  #     - spd2010_touch
+  #   refresh: 1h
+  #
+  # Local source is convenient while developing/testing the fork.
+  - source:
+      type: local
+      path: ../components
+    components:
+      - spd2010_display
+      - spd2010_touch
+
+# Shared I2C bus:
+#   0x20 PCA9554 GPIO expander
+#   0x51 PCF85063 RTC
+#   0x53 SPD2010 touch
+#   0x6B QMI8658 IMU
+i2c:
+  - id: board_i2c
+    sda: GPIO11
+    scl: GPIO10
+    scan: true
+
+pca9554:
+  - id: board_expander
+    address: 0x20
+    i2c_id: board_i2c
+
+display:
+  - platform: spd2010_display
+    id: main_display
+    clock_pin: GPIO40
+    data_pins: [GPIO46, GPIO45, GPIO42, GPIO41]
+    cs_pin: GPIO21
+    reset_pin:
+      pca9554: board_expander
+      number: 1
+    data_rate_mhz: 40
+
+touchscreen:
+  - platform: spd2010_touch
+    id: main_touch
+    display: main_display
+    i2c_id: board_i2c
+    interrupt_pin:
+      number: GPIO4
+      mode: INPUT_PULLUP
+    transform:
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+
+# Board backlight.
+output:
+  - platform: ledc
+    pin: GPIO5
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: Display Backlight
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+# Battery-backed RTC + Home Assistant network time.
+#
+# Boot reads the RTC into the system clock. Once Home Assistant supplies time,
+# write the authoritative HA time back to the RTC.
+time:
+  - platform: pcf85063
+    id: rtc_time
+    i2c_id: board_i2c
+    address: 0x51
+
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      then:
+        - pcf85063.write_time:
+            id: rtc_time
+
+# QMI8658 motion sensor: accelerometer + gyroscope + pitch/roll + temperature.
+# Not implemented in esphome: knock detection, calibration, etc. See the datasheet for details.
+motion:
+  - platform: qmi8658
+    id: imu
+    i2c_id: board_i2c
+    address: 0x6B
+    accelerometer_range: 4G
+    accelerometer_odr: 125HZ
+    gyroscope_range: 512DPS
+    gyroscope_odr: 125HZ
+    axis_map:
+      x: y
+      y: x
+      z: -z
+
+# Separate I2S controllers for speaker and microphone
+i2s_audio:
+  - id: i2s_output
+    i2s_lrclk_pin: GPIO38
+    i2s_bclk_pin: GPIO48
+
+  - id: i2s_input
+    i2s_lrclk_pin: GPIO2
+    i2s_bclk_pin: GPIO15
+
+microphone:
+  - platform: i2s_audio
+    id: board_microphone
+    i2s_audio_id: i2s_input
+    i2s_din_pin: GPIO39
+    adc_type: external
+    pdm: false
+    channel: right
+    sample_rate: 16000
+    # sound_level currently accepts 16-bit microphone sources.
+    bits_per_sample: 16bit
+    correct_dc_offset: true
+
+speaker:
+  - platform: i2s_audio
+    id: board_speaker
+    i2s_audio_id: i2s_output
+    i2s_dout_pin: GPIO47
+    dac_type: external
+    channel: mono
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    buffer_duration: 300ms
+
+media_player:
+  - platform: speaker
+    id: board_media_player
+    name: Speaker
+    volume_initial: 0.75
+    announcement_pipeline:
+      speaker: board_speaker
+      format: FLAC
+      sample_rate: 16000
+      num_channels: 1
+    files:
+      - id: speaker_test_sound
+        file:
+          type: local
+          path: assets/speaker-test.flac
+
+
+binary_sensor:
+  - platform: gpio
+    id: boot_button
+    name: Boot Button
+    pin:
+      number: GPIO0
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      - if:
+          condition:
+            light.is_on: backlight
+          then:
+            - light.turn_off:
+                id: backlight
+                transition_length: 500ms
+          else:
+            - light.turn_on:
+                id: backlight
+                brightness: 80%
+                transition_length: 500ms
+
+sensor:
+  # Internal temperature reported by the QMI8658.
+  - platform: qmi8658
+    qmi8658_id: imu
+    type: temperature
+    id: imu_temperature
+    name: QMI8658 Temperature
+
+  - platform: motion
+    motion_id: imu
+    type: acceleration_x
+    id: accel_x
+    name: QMI8658 Acceleration X
+  - platform: motion
+    motion_id: imu
+    type: acceleration_y
+    id: accel_y
+    name: QMI8658 Acceleration Y
+  - platform: motion
+    motion_id: imu
+    type: acceleration_z
+    id: accel_z
+    name: QMI8658 Acceleration Z
+
+  - platform: motion
+    motion_id: imu
+    type: gyroscope_x
+    id: gyro_x
+    name: QMI8658 Gyroscope X
+  - platform: motion
+    motion_id: imu
+    type: gyroscope_y
+    id: gyro_y
+    name: QMI8658 Gyroscope Y
+  - platform: motion
+    motion_id: imu
+    type: gyroscope_z
+    id: gyro_z
+    name: QMI8658 Gyroscope Z
+
+  - platform: motion
+    motion_id: imu
+    type: pitch
+    id: imu_pitch
+    name: QMI8658 Pitch
+  - platform: motion
+    motion_id: imu
+    type: roll
+    id: imu_roll
+    name: QMI8658 Roll
+
+  # The simplest useful microphone demonstration: ESPHome's sound_level
+  # component computes RMS dB and feeds the LVGL bar below.
+  - platform: sound_level
+    id: microphone_level
+    microphone: board_microphone
+    measurement_duration: 100ms
+    passive: false
+    rms:
+      id: mic_rms
+      name: Microphone RMS
+      on_value:
+        then:
+          - lvgl.bar.update:
+              id: mic_vu
+              value: !lambda |-
+                float v = (x + 60.0f) * (100.0f / 60.0f);
+                if (v < 0) v = 0;
+                if (v > 100) v = 100;
+                return (int) v;
+          - lvgl.label.update:
+              id: mic_db_label
+              text:
+                format: "%.1f dB"
+                args: [x]
+
+interval:
+  # Keep the showcase labels live without attaching repetitive automations to
+  # every individual IMU sensor.
+  - interval: 250ms
+    then:
+      - lvgl.label.update:
+          id: accel_label
+          text:
+            format: "ACC  %+.2f  %+.2f  %+.2f g"
+            args: [id(accel_x).state, id(accel_y).state, id(accel_z).state]
+      - lvgl.label.update:
+          id: gyro_label
+          text:
+            format: "GYR  %+.0f  %+.0f  %+.0f deg/s"
+            args: [id(gyro_x).state, id(gyro_y).state, id(gyro_z).state]
+      - lvgl.label.update:
+          id: attitude_label
+          text:
+            format: "PITCH %+.1f   ROLL %+.1f"
+            args: [id(imu_pitch).state, id(imu_roll).state]
+      - lvgl.label.update:
+          id: imu_temp_label
+          text:
+            format: "TEMP %.1f C"
+            args: [id(imu_temperature).state]
+
+  - interval: 1s
+    then:
+      - lvgl.label.update:
+          id: clock_label
+          text: !lambda |-
+            auto now = id(rtc_time).now();
+            if (!now.is_valid())
+              return std::string("RTC: --:--:--");
+            return std::string("RTC: ") + now.strftime("%H:%M:%S");
+
+lvgl:
+  displays:
+    - main_display
+  touchscreens:
+    - touchscreen_id: main_touch
+  page_wrap: true
+
+  pages:
+    # Page 1: hardware controls and audio. Keep widgets within the round panel's
+    # central safe area; corners are intentionally left unused.
+    - id: hardware_page
+      bg_color: 0x101010
+      on_swipe_right:
+        - lvgl.page.next:
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 34
+            text: "HARDWARE"
+            text_color: 0xFFFFFF
+
+        - label:
+            id: clock_label
+            align: TOP_MID
+            y: 69
+            text: "RTC: --:--:--"
+            text_color: 0xC0C0C0
+
+        - label:
+            align: TOP_MID
+            y: 105
+            text: "MICROPHONE"
+            text_color: 0xFFFFFF
+
+        - bar:
+            id: mic_vu
+            align: TOP_MID
+            y: 133
+            width: 220
+            height: 20
+            min_value: 0
+            max_value: 100
+            value: 0
+
+        - label:
+            id: mic_db_label
+            align: TOP_MID
+            y: 160
+            text: "-- dB"
+            text_color: 0xC0C0C0
+
+        # Brief Parent bus is busy / recovery messages can occur here
+        # because the microphone and speaker share the ESP32-S3 I²S subsystem
+        - button:
+            align: TOP_MID
+            y: 194
+            width: 168
+            height: 54
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "PLAY SOUND"
+            on_click:
+              - media_player.speaker.play_on_device_media_file:
+                  id: board_media_player
+                  media_file: speaker_test_sound
+                  announcement: true
+
+        - label:
+            align: TOP_MID
+            y: 263
+            text: "BACKLIGHT"
+            text_color: 0xFFFFFF
+
+        - slider:
+            id: backlight_slider
+            align: TOP_MID
+            y: 292
+            width: 220
+            min_value: 5
+            max_value: 100
+            value: 80
+            on_value:
+              - light.turn_on:
+                  id: backlight
+                  brightness: !lambda return x / 100.0f;
+                  transition_length: 150ms
+
+        - label:
+            align: BOTTOM_MID
+            y: -42
+            text: "BOOT toggles light - swipe for tests"
+            text_color: 0x909090
+
+    # Page 2: live QMI8658 values.
+    - id: imu_page
+      bg_color: 0x101010
+      on_swipe_right:
+        - lvgl.page.next:
+      on_swipe_left:
+        - lvgl.page.previous:
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 38
+            text: "QMI8658"
+            text_color: 0xFFFFFF
+
+        - label:
+            id: accel_label
+            align: TOP_MID
+            y: 96
+            text: "ACC  --  --  -- g"
+            text_color: 0xFFFFFF
+
+        - label:
+            id: gyro_label
+            align: TOP_MID
+            y: 142
+            text: "GYR  --  --  -- deg/s"
+            text_color: 0xFFFFFF
+
+        - label:
+            id: attitude_label
+            align: TOP_MID
+            y: 188
+            text: "PITCH --   ROLL --"
+            text_color: 0xFFFFFF
+
+        - label:
+            id: imu_temp_label
+            align: TOP_MID
+            y: 234
+            text: "TEMP -- C"
+            text_color: 0xC0C0C0
+
+        - label:
+            align: BOTTOM_MID
+            y: -50
+            text: "Move/tilt - swipe for tests"
+            text_color: 0x909090
+
+    # Page 3: round-display diagnostics.
+    - id: display_test_page
+      bg_color: 0x000000
+      on_swipe_left:
+        - lvgl.page.previous:
+      widgets:
+        # Concentric circles make clipping/centering errors obvious on a round LCD.
+        - obj:
+            align: CENTER
+            width: 360
+            height: 360
+            radius: 180
+            bg_opa: TRANSP
+            border_width: 2
+            border_color: 0xFFFFFF
+
+        - obj:
+            align: CENTER
+            width: 300
+            height: 300
+            radius: 150
+            bg_opa: TRANSP
+            border_width: 2
+            border_color: 0x808080
+
+        - obj:
+            align: CENTER
+            width: 240
+            height: 240
+            radius: 120
+            bg_opa: TRANSP
+            border_width: 2
+            border_color: 0x404040
+
+        - label:
+            align: TOP_MID
+            y: 32
+            text: "DISPLAY TEST"
+            text_color: 0xFFFFFF
+
+        # Compact RGB/CMY/white bars across the centre.
+        - obj:
+            x: 66
+            y: 100
+            width: 46
+            height: 58
+            bg_color: 0xFF0000
+            border_width: 0
+        - obj:
+            x: 113
+            y: 100
+            width: 46
+            height: 58
+            bg_color: 0x00FF00
+            border_width: 0
+        - obj:
+            x: 160
+            y: 100
+            width: 46
+            height: 58
+            bg_color: 0x0000FF
+            border_width: 0
+        - obj:
+            x: 207
+            y: 100
+            width: 46
+            height: 58
+            bg_color: 0x00FFFF
+            border_width: 0
+        - obj:
+            x: 254
+            y: 100
+            width: 46
+            height: 58
+            bg_color: 0xFF00FF
+            border_width: 0
+        - obj:
+            x: 301
+            y: 100
+            width: 46
+            height: 58
+            bg_color: 0xFFFF00
+            border_width: 0
+
+        # Greyscale steps.
+        - obj:
+            x: 82
+            y: 184
+            width: 49
+            height: 46
+            bg_color: 0x000000
+            border_width: 1
+            border_color: 0xFFFFFF
+        - obj:
+            x: 132
+            y: 184
+            width: 49
+            height: 46
+            bg_color: 0x404040
+            border_width: 0
+        - obj:
+            x: 182
+            y: 184
+            width: 49
+            height: 46
+            bg_color: 0x808080
+            border_width: 0
+        - obj:
+            x: 232
+            y: 184
+            width: 49
+            height: 46
+            bg_color: 0xC0C0C0
+            border_width: 0
+        - obj:
+            x: 282
+            y: 184
+            width: 49
+            height: 46
+            bg_color: 0xFFFFFF
+            border_width: 0
+
+        # Continuous horizontal gradient: useful for spotting RGB565 banding,
+        # byte-order problems and uneven panel response.
+        - obj:
+            align: TOP_MID
+            y: 250
+            width: 220
+            height: 28
+            bg_color: 0xFF0000
+            bg_grad_color: 0x0000FF
+            bg_grad_dir: HOR
+            border_width: 1
+            border_color: 0xFFFFFF
+            radius: 0
+
+        # Fine alternating stripes for addressing/sharpness checks.
+        - obj:
+            x: 106
+            y: 292
+            width: 200
+            height: 2
+            bg_color: 0xFFFFFF
+            border_width: 0
+        - obj:
+            x: 106
+            y: 298
+            width: 200
+            height: 2
+            bg_color: 0xFFFFFF
+            border_width: 0
+        - obj:
+            x: 106
+            y: 304
+            width: 200
+            height: 2
+            bg_color: 0xFFFFFF
+            border_width: 0
+        - obj:
+            x: 106
+            y: 310
+            width: 200
+            height: 2
+            bg_color: 0xFFFFFF
+            border_width: 0
+
+        - label:
+            align: TOP_MID
+            y: 326
+            text: "RGB / GREY / GRADIENT / LINES"
+            text_color: 0xFFFFFF
+
+        - label:
+            align: BOTTOM_MID
+            y: -35
+            text: "Swipe for tests"
+            text_color: 0x909090

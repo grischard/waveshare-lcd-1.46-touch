@@ -1,0 +1,1 @@
+DEPENDENCIES = ["display", "esp32"]
