@@ -17,10 +17,14 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-suffix: esphome
 
       - name: Resolve latest ESPHome
         id: esphome
@@ -48,7 +52,7 @@ jobs:
       # - schedule: build only if this ESPHome version has not been seen before
       - name: Check whether this ESPHome release was already tested
         id: tested
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/esphome-version
           key: esphome-tested-${{ steps.esphome.outputs.version }}
@@ -120,7 +124,7 @@ jobs:
 
       - name: Upload firmware
         if: steps.decision.outputs.build == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: waveshare-esp32-s3-touch-lcd-1.46-${{ steps.esphome.outputs.version }}
           path: dist/*.bin
@@ -142,7 +146,7 @@ jobs:
           success() &&
           github.event_name == 'schedule' &&
           steps.decision.outputs.build == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/esphome-version
           key: esphome-tested-${{ steps.esphome.outputs.version }}
