@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -91,8 +91,10 @@ jobs:
 
           mkdir -p dist
 
+          # Expecting: /home/runner/work/waveshare-lcd-1.46-touch/waveshare-lcd-1.46-touch/examples/.esphome/build/waveshare-146-showcase/build/firmware.ota.bin
+
           BIN="$(find . \
-            -type f -path '*/.pioenvs/*/firmware.bin' \
+            -type f -name 'firmware.ota.bin' \
             -print -quit)"
 
           if [ -z "$BIN" ]; then
@@ -103,8 +105,10 @@ jobs:
 
           cp "$BIN" "dist/waveshare-esp32-s3-touch-lcd-1.46-${{ steps.esphome.outputs.version }}.bin"
 
+          # Expecting: /home/runner/work/waveshare-lcd-1.46-touch/waveshare-lcd-1.46-touch/examples/.esphome/build/waveshare-146-showcase/build/firmware.factory.bin
+
           FACTORY="$(find . \
-            -type f \( -name 'firmware.factory.bin' -o -name '*factory.bin' \) \
+            -type f -name 'firmware.factory.bin' \
             -print -quit)"
 
           if [ -n "$FACTORY" ]; then
