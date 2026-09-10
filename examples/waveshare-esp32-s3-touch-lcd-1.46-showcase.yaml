@@ -62,21 +62,19 @@ ota:
   - platform: esphome
 
 external_components:
-  # Once this fork is public, use the GitHub source instead:
-  #
-  # - source: github://grischard/waveshare-lcd-1.46-touch
-  #   components:
-  #     - spd2010_display
-  #     - spd2010_touch
-  #   refresh: 1h
-  #
-  # Local source is convenient while developing/testing the fork.
-  - source:
-      type: local
-      path: ../components
+  - source: github://grischard/waveshare-lcd-1.46-touch
     components:
       - spd2010_display
       - spd2010_touch
+    refresh: 1h
+  
+  # Local source is convenient while developing/testing the fork.
+  # - source:
+  #     type: local
+  #     path: ../components
+  #   components:
+  #     - spd2010_display
+  #     - spd2010_touch
 
 # Shared I2C bus:
 #   0x20 PCA9554 GPIO expander
