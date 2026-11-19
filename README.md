@@ -1,5 +1,8 @@
 # Waveshare ESP32-S3-Touch-LCD-1.46 support for ESPHome
 
+> [!WARNING]
+> ESPHome 2026.11.0 includes full support for the SPD2010, and includes many small improvements to this code. It should be used instead of this component.
+
 ESPHome external components and a hardware showcase for the **SPD2010** display/touch
 controller used by the Waveshare **[ESP32-S3-Touch-LCD-1.46](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.46B)** family.
 
